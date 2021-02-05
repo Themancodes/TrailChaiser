@@ -1,0 +1,82 @@
+version: 2.1
+
+executors:
+  default:
+    description: The official CircleCI Ruby Docker image
+    docker:
+      - image: circleci/ruby:2.7.2-node
+    environment:
+      - BUNDLE_JOBS: 4
+      - BUNDLE_RETRY: 3
+      - BUNDLE_PATH: vendor/bundle
+    working_directory: ~/boilerplate-rails-api
+
+jobs:
+  checkout:
+    executor: default
+    steps:
+      - checkout
+      - persist_to_workspace:
+          root: ~/boilerplate-rails-api
+          paths:
+            - .
+
+  bundle:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/boilerplate-rails-api
+      - restore_cache:
+          keys:
+            - boilerplate-rails-api-{{ checksum "Gemfile.lock" }}
+            - boilerplate-rails-api-
+      - run: gem i bundler -v $(tail -1 Gemfile.lock | tr -d ' ')
+      - run: sudo apt-get install cmake
+      - run: |
+          bundle check || bundle install --frozen --path vendor/bundle && bundle clean
+      - save_cache:
+          key: boilerplate-rails-api-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - persist_to_workspace:
+          root: ~/boilerplate-rails-api
+          paths:
+            - vendor/bundle
+
+  lefthook:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/boilerplate-rails-api
+      - run: |
+          bundle exec lefthook run all
+
+  rspec:
+    executor: default
+    docker:
+      - image: circleci/ruby:2.7.2-node-browsers
+      - image: circleci/postgres:11-alpine-ram
+        environment:
+          - POSTGRES_USER: boilerplate
+    parallelism: 2
+    steps:
+      - attach_workspace:
+          at: ~/boilerplate-rails-api
+      - run: yarn
+      - run: bundle exec rake db:create db:schema:load --trace
+      - run: bundle exec rspec
+
+workflows:
+  version: 2
+  default: &default
+    jobs:
+      - checkout
+      - bundle:
+          requires:
+            - checkout
+      - rspec:
+          requires:
+            - bundle
+      - lefthook:
+          requires:
+            - bundle
